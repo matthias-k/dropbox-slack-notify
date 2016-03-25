@@ -53,10 +53,12 @@ def oauth_callback():
     return redirect(url_for('done'))
 
 cursors = {}
+files = set()
 
-def process_prefix(prefix):
+def process_prefix(prefix, verbose=True):
     '''Call /delta for the given user ID and process any changes.'''
     global cursors
+    global files
 
     # OAuth token for the user
     token = app.config['DROPBOX_APP_TOKEN']
@@ -72,7 +74,16 @@ def process_prefix(prefix):
         result = client.delta(cursor, path_prefix=prefix)
 
         for path, metadata in result['entries']:
-            print(path)
+            if verbose:
+                if metadata is None:
+                    print("DELETED", path)
+                    if path in files:
+                        files.remove(path)
+                elif path in files:
+                    print('MODIFIED', path, metadata.get('modifier'))
+                else:
+                    print('ADDED', path, metadata.get('modifier'))
+                    files.add(path)
 
         # Update cursor
         cursor = result['cursor']
@@ -81,10 +92,11 @@ def process_prefix(prefix):
         # Repeat only if there's more to do
         has_more = result['has_more']
 
-def process_all():
+def process_all(verbose=True):
     '''Call /delta for the given user ID and process any changes.'''
+    print("CHANGES!")
     for prefix in app.config['DROPBOX_PATH_PREFIXES']:
-        process_prefix(prefix)
+        process_prefix(prefix, verbose=verbose)
 
 @app.route('/')
 def index():
@@ -103,7 +115,7 @@ def validate_request():
        (If not, this is a spoofed webhook.)'''
 
     signature = request.headers.get('X-Dropbox-Signature')
-    return signature == hmac.new(APP_SECRET, request.data, sha256).hexdigest()
+    return signature == hmac.new(app.config['DROPBOX_APP_SECRET'], request.data, sha256).hexdigest()
 
 @app.route('/webhook', methods=['GET'])
 def challenge():
@@ -114,6 +126,7 @@ def challenge():
 @app.route('/webhook', methods=['POST'])
 def webhook():
     '''Receive a list of changed user IDs from Dropbox and process each.'''
+    print("INCOMING")
 
     # Make sure this is a valid request from Dropbox
     if not validate_request(): abort(403)
@@ -127,8 +140,7 @@ def webhook():
     return ''
 
 if __name__=='__main__':
-    #process_all()
-    threading.Thread(target=process_all).start()
-    app.run(debug=True)
+    process_all(verbose=False)
+    app.run(debug=True, host='0.0.0.0', port=12345)
     #threading.Thread(target=process_user, args=(uid,)).start()
     
